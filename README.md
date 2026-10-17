@@ -44,7 +44,7 @@ The metric, rank blending and feature generation are in [`src/ranking_utils.py`]
 | stacker blend | v5 + v4 + bagged stackers | | 91.9778 |
 | **final** | + stacker with CatBoost seed bag and MLP | | **91.9988** |
 
-Full version log (in Russian): [`reports/04_versions_log.md`](reports/04_versions_log.md).
+Every leaderboard submission with its OOF and LB: [`docs/experiment_log.md`](docs/experiment_log.md).
 
 ## Key lessons
 
@@ -74,12 +74,10 @@ The +0.59 gap to 1st place is most likely explained by a leak rather than by mod
 | Path | Contents |
 |---|---|
 | `notebooks/` | Early iterations, baseline to v3 (Colab) |
-| `reports/` | Iteration reports with OOF and LB of every submission (in Russian) |
-| `research/` | Literature-based analysis of the v3 regression (in Russian) |
-| `agent_prompts/` | Experiment specifications for iterations v4 and v5 |
+| `docs/experiment_log.md` | All leaderboard submissions, single-model and stacker OOF, leak probes |
 | `src/` | Metric, rank blending, listwise and domain features |
 
-Pipeline scripts for v4 to v9 (stackers, seed bag, MLP) were run in Colab; their parameters and results are recorded in `reports/`.
+Pipeline scripts for v4 to v9 (stackers, seed bag, MLP) were run in Colab; their parameters and results are recorded in `docs/experiment_log.md`.
 
 ## Running
 
