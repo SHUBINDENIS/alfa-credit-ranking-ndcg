@@ -1,93 +1,94 @@
-# Альфа-Банк «Кредиты Наличными»: ранжирование кредитных предложений (NDCG@5)
+# Alfa-Bank "Cash Loans": Learning to Rank Credit Offers (NDCG@5)
 
-Решение хакатона Альфа-Банка на Yandex Contest. Итог: **NDCG@5 × 100 = 91.9988**, 6-е место на момент последнего сабмита (лидер 92.59, кластер 2–5 мест — 92.03–92.05).
+My solution to the Alfa-Bank "Cash Loans" hackathon on Yandex Contest (May 2026).
 
-Репозиторий — разбор пути от бейзлайна до ансамбля стекеров: что сработало, что сломалось и почему. Самое ценное здесь не код, а выводы про сдвиг распределений и про то, когда кросс-валидации нельзя верить.
+**Result: NDCG@5 × 100 = 91.9988, 6th place** at the time of my final submission (leader 92.59, places 2 to 5 within 92.03 to 92.05).
 
-## Задача
+This repository walks through the path from baseline to a stacked ensemble: what worked, what broke and why. The most useful part is not the code but the lessons on distribution shift and on when cross-validation cannot be trusted.
 
-Клиент подаёт заявку (`request_id`), банк показывает ему от 1 до 50 предложений (в среднем 22). Клиент выбирает **ровно одно** (`is_deal = 1`). Нужно упорядочить предложения так, чтобы выбранное оказалось как можно выше.
+## Problem
 
-- Метрика: NDCG@5. При одном позитиве в группе IDCG = 1, а метрика равна `1 / log2(rank + 2)`, если выбранное предложение в топ-5, иначе 0.
-- Train: 845 110 строк, 37 891 заявка. Test: 936 883 строки, 38 742 заявки.
-- Признаки предложения: ставка, срок, лимит, ожидаемая доходность `eva`, ожидаемые потери `ncl`, уровень риска, тип предложения, корзина, `variant_no`. Признаки заявки: запрошенная сумма и срок, канал. Плюс 280 признаков клиента, join по `(app_id, date_part)`.
-- Данные синтетические, январь–март 2026. Данные организаторов в репозиторий не входят.
+A client submits a loan application (`request_id`). The bank shows from 1 to 50 offers (22 on average), and the client accepts **exactly one** (`is_deal = 1`). The task is to rank the offers so that the accepted one is as high as possible.
 
-Грабли в данных: `rate`, `eva`, `eva_perc`, `ncl` лежат строками (Hive Decimal) — нужен `pd.to_numeric`; в признаках клиента 148 дублей по `app_id`.
+- **Metric:** NDCG@5. With one positive per group, IDCG = 1 and the metric equals `1 / log2(rank + 2)` if the accepted offer is in the top 5, otherwise 0.
+- **Data:** train has 845,110 rows and 37,891 applications; test has 936,883 rows and 38,742 applications.
+- **Features:** offer level (rate, term, limit, expected revenue `eva`, expected credit loss `ncl`, risk level, offer type, `variant_no`), application level (requested amount and term, channel), plus 280 client features joined by `(app_id, date_part)`.
+- Synthetic data for January to March 2026. The organizers' data is not included in this repository.
 
-## Подход
+Data pitfalls: `rate`, `eva`, `eva_perc` and `ncl` are stored as strings (Hive Decimal) and need `pd.to_numeric`; the client feature table has 148 duplicate `app_id` values.
 
-1. **Listwise-признаки.** Клиент выбирает не в вакууме, а сравнивает предложения между собой, поэтому для ставки, срока, лимита, `eva`, `ncl` внутри заявки считаются ранг, z-score, отклонения от минимума, максимума и медианы, флаги «лучшее в заявке».
-2. **Доменные признаки.** Аннуитетный платёж, полная переплата, `eva − ncl`, доходность на рубль лимита, соответствие лимита и срока запросу клиента.
-3. **Базовые модели ранжирования**, 5-fold `GroupKFold` по `request_id`, одинаковые фолды для всех моделей:
+## Approach
+
+1. **Listwise features.** A client compares offers against each other, so within each application I compute rank, z-score, distance to min, max and median, and "best in application" flags for rate, term, limit, `eva` and `ncl`.
+2. **Domain features.** Annuity payment, total interest, `eva - ncl`, revenue per unit of limit, match between offered and requested amount and term.
+3. **Base ranking models**, 5-fold `GroupKFold` by `request_id` with identical folds for all models:
    - LightGBM `lambdarank` (`lambdarank_truncation_level = 8`, `label_gain = [0, 1]`);
-   - CatBoost `YetiRankPairwise` с нативным ordered target encoding категорий;
+   - CatBoost `YetiRankPairwise` with native ordered target encoding;
    - XGBoost `rank:pairwise`;
-   - CatBoost seed-bag (5 сидов) и слабая MLP с listwise-лоссом как источники разнообразия.
-4. **Стекер второго уровня** (паттерн 5-го места Expedia ICDM 2013): LambdaMART на z-score и ранговых перцентилях OOF-предсказаний базовых моделей внутри заявки плюс топ-20 исходных признаков.
-5. **Бленд только из стекеров** по ранговым перцентилям внутри заявки. Финальный: `stacker_v5 0.50 + stacker_v9 0.20 + stacker_v4 0.10 + stacker_bag 0.20`.
+   - CatBoost seed bag (5 seeds) and a weak MLP with a listwise loss as sources of diversity.
+4. **Second-level stacker** (the 5th place pattern from Expedia, ICDM 2013): LambdaMART on within-group z-scores and rank percentiles of base model OOF predictions, plus the top 20 original features.
+5. **Blend of stackers only**, by within-group rank percentiles. Final weights: `stacker_v5 0.50 + stacker_v9 0.20 + stacker_v4 0.10 + stacker_bag 0.20`.
 
-Метрика, ранговый бленд и генерация признаков — в [`src/ranking_utils.py`](src/ranking_utils.py).
+The metric, rank blending and feature generation are in [`src/ranking_utils.py`](src/ranking_utils.py).
 
-## Путь по лидерборду
+## Leaderboard progression
 
-| Версия | Что изменено | OOF | LB |
-|---|---|---|---|
-| baseline | LightGBM lambdarank + CatBoost, listwise-ранги | — | 91.65 |
-| v2 | + XGBoost, доменные признаки, count и target encoding | 0.91629 | 91.7855 |
-| v3 | + позиция строки в заявке, 4-я модель QuerySoftMax, adversarial-веса | 0.91598 | 91.6992 ↓ |
-| v4 | убраны позиция строки, внешний target encoding и QuerySoftMax | 0.91724 | 91.8792 |
-| stacker_v4 | LambdaMART-стекер над базовыми моделями v4 | 0.91754 | 91.9069 |
-| stacker_v5 | тот же стекер над моделями без 5 «дрейфующих» признаков | 0.91732 | 91.9698 |
-| бленд стекеров | v5 + v4 + bag стекеров | — | 91.9778 |
-| **ch_v9_d** | + стекер с CatBoost seed-bag и MLP | — | **91.9988** |
+| Version | Change | OOF | LB |
+|---|---|---:|---:|
+| baseline | LightGBM lambdarank + CatBoost, listwise ranks | | 91.65 |
+| v2 | + XGBoost, domain features, count and target encoding | 0.91629 | 91.7855 |
+| v3 | + row position in group, CatBoost QuerySoftMax, adversarial weights | 0.91598 | 91.6992 (drop) |
+| v4 | removed row position, external target encoding and QuerySoftMax | 0.91724 | 91.8792 |
+| stacker_v4 | LambdaMART stacker over v4 base models | 0.91754 | 91.9069 |
+| stacker_v5 | same stacker over base models without 5 drifting features | 0.91732 | 91.9698 |
+| stacker blend | v5 + v4 + bagged stackers | | 91.9778 |
+| **final** | + stacker with CatBoost seed bag and MLP | | **91.9988** |
 
-Полный лог версий — [`reports/04_versions_log.md`](reports/04_versions_log.md).
+Full version log (in Russian): [`reports/04_versions_log.md`](reports/04_versions_log.md).
 
-## Главные выводы
+## Key lessons
 
-**1. Утечка через порядок строк работает только на train.** В исходном порядке файла первая строка заявки выбиралась в 9.5 % случаев против 4.5 % в среднем. Признак позиции строки на LB дал регресс −0.085: порядок в test сформирован иначе. Прецедент описан в разборе хакатона Альфа-Банка ML-on-Graphs на Хабре.
+**1. A row-order leak that works only on train.** In the original file order, the first row of an application was the accepted offer in 9.5% of cases versus 4.5% on average. A row position feature lost 0.085 on LB: the test file was ordered differently.
 
-**2. Adversarial AUC = 1.0 — кросс-валидация врёт.** Классификатор отличал train от test безошибочно. Удаление пяти самых дрейфующих признаков (`max_grace_days`, `salary_last_days`, `ei_date`, `eva_perc_std`, `term_std`) **ухудшило** OOF, но **улучшило** LB стекера на +0.063. Модель на полных признаках выучивала закономерности, которых в test нет.
+**2. Adversarial AUC = 1.0 means cross-validation is lying.** A classifier separated train from test perfectly. Removing the five most drifting features (`max_grace_days`, `salary_last_days`, `ei_date`, `eva_perc_std`, `term_std`) made OOF **worse** but improved the stacker's LB by **+0.063**. The model on all features was learning patterns that do not exist in test.
 
-**3. OOF не ранжирует сабмиты.** На 13+ сабмитах ранговая корреляция OOF и LB ≈ 0.42, importance-weighted OOF (Sugiyama, 2007) ≈ 0.45. Бленд с лучшим OOF (0.91833, подобран дифференциальной эволюцией) на LB оказался хуже простого стекера. Перевзвешивание `p / (1 − p)` при AUC = 1.0 вырождается в константу.
+**3. OOF does not rank submissions.** Across 13+ submissions, the rank correlation between OOF and LB was about 0.42, and about 0.45 for importance-weighted OOF (Sugiyama, 2007). The blend with the best OOF (0.91833, tuned with differential evolution) scored lower on LB than a plain stacker. Density-ratio reweighting `p / (1 - p)` collapses to a constant when AUC = 1.0.
 
-**4. Меньше базовых моделей в бленде — выше LB.** Стекер уже учёл базовые модели; повторное добавление их в бленд стоило 0.003–0.012 LB за каждую. Бленд только из стекеров стабильно выигрывал.
+**4. Fewer base models in the blend, higher LB.** The stacker already uses the base models, and adding them to the blend again cost 0.003 to 0.012 LB each. A blend of stackers only won consistently.
 
-**5. Разнообразие важнее силы.** MLP с OOF 0.902 (заметно слабее бустингов) внутри стекера дала +0.013 LB в бленде. CatBoost `QuerySoftMax`, теоретически идеальный для одного позитива в группе, оказался самой слабой моделью (0.91295 против 0.91390 у `YetiRankPairwise`): при одном позитиве он вырождается в ListNet top-1 и даёт мало градиентов на заявку.
+**5. Diversity beats strength.** An MLP with OOF 0.902, clearly weaker than the boosters, added +0.013 LB inside the stacker. CatBoost `QuerySoftMax`, in theory ideal for one positive per group, was the weakest model (0.91295 vs 0.91390 for `YetiRankPairwise`): with one positive it reduces to ListNet top-1 and gives few gradients per group.
 
-**6. Технические грабли.** NDCG в CatBoost на GPU считается на CPU — с `metric_period` по умолчанию фолд шёл 40+ минут, с `metric_period = 200` — в разы быстрее. OOF-предсказания нужно сохранять вместе с ключом `(app_id, variant_no)`: перезагрузка по порядку строк однажды дала OOF 0.19 вместо 0.915.
+**6. Engineering pitfalls.** CatBoost computes NDCG on CPU even when training on GPU: with the default `metric_period` a fold took over 40 minutes, with `metric_period = 200` it was several times faster. OOF predictions must be saved with the `(app_id, variant_no)` key: reloading them by row order once produced OOF 0.19 instead of 0.915.
 
-## Что не сработало
+## What did not work
 
-- признаки позиции строки, внешний байесовский target encoding, adversarial-веса;
+- row position features, external Bayesian target encoding, adversarial sample weights;
 - `rank_xendcg` (OOF 0.906), CatBoost `QuerySoftMax`;
-- FT-Transformer: на LB −0.016 при почти том же OOF;
-- поиск утечек: `commit.csv` оказался предсказаниями-бейзлайном, точных совпадений предложений train и test нет, пересечение `app_id` 0.2 %.
+- FT-Transformer: -0.016 on LB at nearly the same OOF;
+- leak hunting: `commit.csv` turned out to be baseline predictions, there are no exact offer matches between train and test, and `app_id` overlap is 0.2%.
 
-Разрыв до 1-го места (+0.59) почти наверняка объясняется утечкой, а не моделью: между 2-м и 5-м местом всего 0.03.
+The +0.59 gap to 1st place is most likely explained by a leak rather than by modeling: places 2 to 5 are within 0.03 of each other.
 
-## Структура
+## Repository structure
 
-```
-notebooks/      ноутбуки ранних итераций (Colab)
-  00_first_attempt.ipynb
-  01_baseline_lgb_cb.ipynb
-  02_v2_listwise_fe_3models.ipynb
-  03_v3_rowpos_advweight_regress.ipynb
-  04_quickfix_rowpos.ipynb
-reports/        отчёты итераций с OOF и LB каждого сабмита
-research/       разбор регресса v3 по литературе
-agent_prompts/  постановки для агента на итерации v4–v5
-src/            метрика, ранговый бленд, listwise- и доменные признаки
-```
+| Path | Contents |
+|---|---|
+| `notebooks/` | Early iterations, baseline to v3 (Colab) |
+| `reports/` | Iteration reports with OOF and LB of every submission (in Russian) |
+| `research/` | Literature-based analysis of the v3 regression (in Russian) |
+| `agent_prompts/` | Experiment specifications for iterations v4 and v5 |
+| `src/` | Metric, rank blending, listwise and domain features |
 
-Скрипты стадий v4–v9 (стекеры, seed-bag, MLP) выполнялись агентом в Colab по постановкам из `agent_prompts/`; результаты и параметры зафиксированы в `reports/`.
+Pipeline scripts for v4 to v9 (stackers, seed bag, MLP) were run in Colab; their parameters and results are recorded in `reports/`.
 
-## Запуск
+## Running
 
 ```bash
 pip install -r requirements.txt
 ```
 
-Ноутбуки рассчитаны на Colab с GPU (T4 достаточно для бустингов). Данные хакатона положить в `data/`: `train_dataset_small.pq`, `test_dataset_small.pq`, `features_small.pq`.
+Notebooks are designed for Colab with a GPU (a T4 is enough for the boosters). Put the hackathon data in `data/`: `train_dataset_small.pq`, `test_dataset_small.pq`, `features_small.pq`.
+
+## Stack
+
+Python, pandas, LightGBM, CatBoost, XGBoost, scikit-learn, Optuna
