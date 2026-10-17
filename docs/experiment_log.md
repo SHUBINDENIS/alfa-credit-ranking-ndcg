@@ -15,9 +15,9 @@ Every submission scored on the public leaderboard, grouped by iteration. OOF is 
 
 Feature sets:
 
-- **v3** — v2 features plus row position within the application and adversarial sample weights.
-- **v4** — v3 minus row position features and external Bayesian target encoding.
-- **v5** — v4 minus the five most drifting features (`max_grace_days`, `salary_last_days`, `ei_date`, `eva_perc_std`, `term_std`); adversarial AUC drops from 1.00 to 0.95.
+- **v3**: v2 features plus row position within the application and adversarial sample weights.
+- **v4**: v3 minus row position features and external Bayesian target encoding.
+- **v5**: v4 minus the five most drifting features (`max_grace_days`, `salary_last_days`, `ei_date`, `eva_perc_std`, `term_std`); adversarial AUC drops from 1.00 to 0.95.
 
 ## Stackers (OOF NDCG@5)
 

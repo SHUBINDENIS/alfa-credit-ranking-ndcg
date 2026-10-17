@@ -29,7 +29,7 @@ Data pitfalls: `rate`, `eva`, `eva_perc` and `ncl` are stored as strings (Hive D
 4. **Second-level stacker** (the 5th place pattern from Expedia, ICDM 2013): LambdaMART on within-group z-scores and rank percentiles of base model OOF predictions, plus the top 20 original features.
 5. **Blend of stackers only**, by within-group rank percentiles. Final weights: `stacker_v5 0.50 + stacker_v9 0.20 + stacker_v4 0.10 + stacker_bag 0.20`.
 
-The metric, rank blending and feature generation are in [`src/ranking_utils.py`](src/ranking_utils.py).
+The full pipeline is in [`src/`](src): features, base models, stackers and the final blend.
 
 ## Leaderboard progression
 
@@ -69,24 +69,34 @@ Every leaderboard submission with its OOF and LB: [`docs/experiment_log.md`](doc
 
 The +0.59 gap to 1st place is most likely explained by a leak rather than by modeling: places 2 to 5 are within 0.03 of each other.
 
+## Reproducing the final submission
+
+```bash
+pip install -r requirements.txt
+python -m src.pipeline --data-dir data --out artifacts
+```
+
+Put the hackathon data in `data/`: `train_dataset_small.pq`, `test_dataset_small.pq`, `features_small.pq`. The full run needs a GPU (a Colab T4 is enough): CatBoost and XGBoost train on GPU, and the CatBoost seed bag alone is 25 fits. Each stage caches its OOF and test predictions in `artifacts/`, so an interrupted run resumes where it stopped. The v5 feature set drops the five drifting features found in the competition run; `--recompute-drift` reruns adversarial validation and drops whatever drifts most now. For a quick CPU check on 1% of applications (about 5 minutes):
+
+```bash
+python -m src.pipeline --data-dir data --out artifacts_smoke --sample-frac 0.01 --device cpu --fast
+```
+
+The final blend was checked against the submitted file: combining the four stacker predictions saved during the competition with `src.ranking_utils.rank_blend` and the weights above reproduces the 91.9988 submission exactly. The code in `src/` is a cleaned-up version of the competition scripts with the same features, folds and parameters. The MLP training script was not kept, so `src/mlp.py` reimplements it from the recorded setup (512, 256, 128 dense layers, softmax loss within each application); its OOF may differ slightly from the original 0.902.
+
 ## Repository structure
 
 | Path | Contents |
 |---|---|
+| `src/pipeline.py` | End-to-end run: v4 and v5 base models, four stackers, final blend |
+| `src/data.py`, `src/features.py`, `src/dataset.py` | Loading, listwise, domain and count features, shared folds |
+| `src/models.py`, `src/mlp.py` | LightGBM, XGBoost, CatBoost, CatBoost seed bag, listwise MLP |
+| `src/stacker.py` | LambdaMART stacker on within-group z-scores and rank percentiles |
+| `src/drift.py` | Adversarial validation and drifting feature selection |
+| `src/ranking_utils.py` | NDCG@5, rank blending |
 | `notebooks/` | Early iterations, baseline to v3 (Colab) |
 | `docs/experiment_log.md` | All leaderboard submissions, single-model and stacker OOF, leak probes |
-| `src/` | Metric, rank blending, listwise and domain features |
-
-Pipeline scripts for v4 to v9 (stackers, seed bag, MLP) were run in Colab; their parameters and results are recorded in `docs/experiment_log.md`.
-
-## Running
-
-```bash
-pip install -r requirements.txt
-```
-
-Notebooks are designed for Colab with a GPU (a T4 is enough for the boosters). Put the hackathon data in `data/`: `train_dataset_small.pq`, `test_dataset_small.pq`, `features_small.pq`.
 
 ## Stack
 
-Python, pandas, LightGBM, CatBoost, XGBoost, scikit-learn, Optuna
+Python, pandas, LightGBM, CatBoost, XGBoost, PyTorch, scikit-learn

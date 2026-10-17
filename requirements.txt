@@ -7,3 +7,4 @@ lightgbm>=4.3
 catboost>=1.2
 xgboost>=2.0
 optuna>=3.5
+torch>=2.1

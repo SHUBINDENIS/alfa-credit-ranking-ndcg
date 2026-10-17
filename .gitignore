@@ -7,3 +7,5 @@ data/
 __pycache__/
 .ipynb_checkpoints/
 .venv/
+catboost_info/
+artifacts*/
